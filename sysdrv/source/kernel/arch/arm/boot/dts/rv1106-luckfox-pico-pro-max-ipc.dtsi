@@ -296,6 +296,10 @@
 	pinctrl-0 = <&i2c1m1_xfer>;
 };
 
+&i2c2 {
+	pinctrl-0 = <&i2c1m0_xfer>;
+};
+
 &i2c3 {
 	pinctrl-0 = <&i2c3m1_xfer &i2c3m0_xfer>;
 };
@@ -308,7 +312,7 @@
 
 // UART
 &uart0 {
-	pinctrl-0 = <&uart0m0_xfer &uart0m1_xfer>;
+	pinctrl-0 = <&uart0m0_xfer>;
 };
 &uart1 {
 	pinctrl-0 = <&uart1m1_xfer>;

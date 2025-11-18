@@ -95,7 +95,7 @@
 
 /**********SPI**********/
 &spi0 {
-	status = "disabled";
+	status = "okey";
 	spidev@0 {
 		spi-max-frequency = <50000000>;
 	};
@@ -105,6 +105,19 @@
 };
 
 /**********I2C**********/
+
+/* I2C0_M2 */                       
+&i2c0 {
+	status = "okey";
+	clock-frequency = <100000>;
+};
+
+/* I2C2_M0 */                       
+&i2c2 {
+	status = "okey";
+	clock-frequency = <100000>;
+};
+
 /* I2C3_M1 */
 &i2c3 {
 	status = "disabled";
@@ -119,6 +132,11 @@
 
 
 /**********UART**********/
+/* UART0_M1 */
+&uart0 {
+	status = "okey";
+};
+
 /* UART3_M1 */
 &uart3 {
 	status = "disabled";

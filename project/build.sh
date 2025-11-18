@@ -1466,10 +1466,10 @@ function __PACKAGE_OEM() {
 [ -f /etc/profile.d/RkEnv.sh ] && source /etc/profile.d/RkEnv.sh
 case \$1 in
 	start)
-		sh /oem/usr/bin/RkLunch.sh
+		sh /oem/usr/bin/RkLunch.sh > /dev/null 2>&1 &
 		;;
 	stop)
-		sh /oem/usr/bin/RkLunch-stop.sh
+		sh /oem/usr/bin/RkLunch-stop.sh > /dev/null 2>&1 &
 		;;
 	*)
 		exit 1
