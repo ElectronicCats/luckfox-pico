@@ -289,6 +289,7 @@
 };
 // I2C
 &i2c0 {
+	pinctrl-names = "default", "conifg";
 	pinctrl-0 = <&i2c0m2_xfer>;
 };
 
@@ -297,6 +298,7 @@
 };
 
 &i2c2 {
+	pinctrl-names = "default", "conifg";
 	pinctrl-0 = <&i2c1m0_xfer>;
 };
 

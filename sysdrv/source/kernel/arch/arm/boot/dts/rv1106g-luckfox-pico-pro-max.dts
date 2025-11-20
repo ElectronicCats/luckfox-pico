@@ -12,6 +12,28 @@
 / {
 	model = "Luckfox Pico Pro Max";
 	compatible = "rockchip,rv1103g-38x38-ipc-v10", "rockchip,rv1106g3";
+
+	gpio-button {
+        compatible = "gpio-keys";
+        pinctrl-names = "default";
+        pinctrl-0 = <&button1_pin &button2_pin>;
+        status = "okay";
+
+        button1 {
+            label = "User Button 1";
+            linux,code = <KEY_ENTER>;
+            gpios = <&gpio1 RK_PB1 GPIO_ACTIVE_LOW>;
+            debounce-interval = <50>;
+            wakeup-source;
+        };
+
+        button2 {
+            label = "User Button 2";
+            linux,code = <KEY_HOME>;
+            gpios = <&gpio3 RK_PA2 GPIO_ACTIVE_LOW>;
+            debounce-interval = <50>;
+        };
+    };
 };
 
 /**********CRU**********/
@@ -95,7 +117,7 @@
 
 /**********SPI**********/
 &spi0 {
-	status = "okey";
+	status = "okay";
 	spidev@0 {
 		spi-max-frequency = <50000000>;
 	};
@@ -108,13 +130,13 @@
 
 /* I2C0_M2 */                       
 &i2c0 {
-	status = "okey";
+	status = "okay";
 	clock-frequency = <100000>;
 };
 
 /* I2C2_M0 */                       
 &i2c2 {
-	status = "okey";
+	status = "okay";
 	clock-frequency = <100000>;
 };
 
@@ -134,7 +156,7 @@
 /**********UART**********/
 /* UART0_M1 */
 &uart0 {
-	status = "okey";
+	status = "okay";
 };
 
 /* UART3_M1 */
@@ -150,4 +172,19 @@
 /**********RTC**********/
 &rtc {
 	status = "okay";
+};
+
+&pinctrl {
+
+    /* keep your bluetooth & wifi configs intact... */
+
+    gpio-button {
+        button1_pin: button1-pin {
+            rockchip,pins = <1 RK_PB1 RK_FUNC_GPIO &pcfg_pull_up>;
+        };
+
+        button2_pin: button2-pin {
+            rockchip,pins = <3 RK_PA2 RK_FUNC_GPIO &pcfg_pull_up>;
+        };
+    };
 };
