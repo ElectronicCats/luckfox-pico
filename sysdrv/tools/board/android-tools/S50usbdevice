@@ -8,7 +8,7 @@
 
 UMS_EN=off
 ADB_EN=on
-MTP_EN=off
+MTP_EN=on
 NTB_EN=off
 ACM_EN=off
 UAC1_EN=off
@@ -57,7 +57,7 @@ function_init()
 	test_write 1 ${USB_FUNCTIONS_DIR}/uac2.gs0/p_feature_unit
 	mkdir ${USB_FUNCTIONS_DIR}/ffs.adb
 	mkdir ${USB_FUNCTIONS_DIR}/ffs.ntb
-	mkdir ${USB_FUNCTIONS_DIR}/mtp.gs0
+	mkdir ${USB_FUNCTIONS_DIR}/ffs.mtp
 	mkdir ${USB_FUNCTIONS_DIR}/rndis.gs0
 	#write /config/usb_gadget/g1/functions/rndis.gs0/wceis 1
 	mkdir ${USB_FUNCTIONS_DIR}/acm.gs6
@@ -214,13 +214,13 @@ parameter_init()
 	esac
 }
 
-use_os_desc()
-{
-	if [ $MTP_EN = on ];then
-		echo "MTP" > ${USB_FUNCTIONS_DIR}/mtp.gs0/os_desc/interface.MTP/compatible_id
-		echo 1 > ${USB_CONFIGFS_DIR}/os_desc/use
-	fi
-}
+#use_os_desc()
+#{
+	#if [ $MTP_EN = on ];then
+		#echo "MTP" > ${USB_FUNCTIONS_DIR}/mtp.gs0/os_desc/interface.MTP/compatible_id
+		#echo 1 > ${USB_CONFIGFS_DIR}/os_desc/use
+	#fi
+#}
 
 pre_run_binary()
 {
@@ -234,6 +234,11 @@ pre_run_binary()
 		mkdir /dev/usb-ffs/ntb -m 0770
 		mount -o uid=2000,gid=2000 -t functionfs ntb /dev/usb-ffs/ntb
 		# Not start app here
+	fi
+
+	if [ $MTP_EN = on ];then
+		mkdir -p /dev/ffs-mtp
+		mount -t functionfs mtp /dev/ffs-mtp
 	fi
 
 	# Add uvc app here with start-stop-daemon
@@ -336,7 +341,7 @@ bind_functions()
 	fi
 
 	test $RNDIS_EN = on && syslink_function rndis.gs0
-	test $MTP_EN = on && syslink_function mtp.gs0
+	test $MTP_EN = on && syslink_function ffs.mtp
 	test $NTB_EN = on && syslink_function ffs.ntb
 	test $ADB_EN = on && syslink_function ffs.adb
 	test $ACM_EN = on && syslink_function acm.gs6
@@ -371,7 +376,8 @@ bind_functions()
 run_binary()
 {
 	if [ $MTP_EN = on ];then
-		start-stop-daemon --start --quiet --background --exec /usr/bin/mtp-server
+		#start-stop-daemon --start --quiet --background --exec /usr/bin/mtp-server
+		umtprd &
 	fi
 	if [ $RNDIS_EN = on ];then
 
@@ -392,7 +398,7 @@ usb_device_stop()
 {
 	echo "none" > ${USB_CONFIGFS_DIR}/UDC
 	program_kill adbd
-	program_kill mtp-server
+	#program_kill mtp-server
 	ls ${USB_CONFIGS_DIR} | grep f[0-9] | xargs -I {} rm ${USB_CONFIGS_DIR}/{}
 }
 
@@ -416,14 +422,14 @@ start)
 #		exit 0
 #	fi
 	test -d ${USB_CONFIGFS_DIR} || configfs_init
-	use_os_desc
+	#use_os_desc
 	echo $PID > ${USB_CONFIGFS_DIR}/idProduct
 	bind_functions
 	pre_run_binary
 	sleep 1
+	run_binary
 	UDC=`ls /sys/class/udc/| awk '{print $1}'`
 	echo $UDC > ${USB_CONFIGFS_DIR}/UDC
-	run_binary
 	;;
 stop)
 	usb_device_stop
