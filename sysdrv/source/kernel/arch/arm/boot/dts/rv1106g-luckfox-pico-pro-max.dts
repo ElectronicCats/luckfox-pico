@@ -12,6 +12,53 @@
 / {
 	model = "Luckfox Pico Pro Max";
 	compatible = "rockchip,rv1103g-38x38-ipc-v10", "rockchip,rv1106g3";
+
+	gpio_keys: gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio1_pd3
+					 &gpio2_pb1
+					 &gpio2_pb0
+					 &gpio2_pa7
+					 &gpio2_pa6>;
+
+		key_user: key-user {
+			label = "USER_KEY";
+			linux,code = <KEY_ENTER>;
+			gpios = <&gpio1 RK_PD3 GPIO_ACTIVE_LOW>;
+			debounce-interval = <10>;
+			wakeup-source;
+		};
+		key__user_up: key-user-up {
+			label = "UP_USER_KEY";
+			linux,code = <KEY_UP>;
+			gpios = <&gpio2 RK_PB1 GPIO_ACTIVE_LOW>;
+			debounce-interval = <10>;
+			wakeup-source;
+		};
+		key_user_right: key-user-right {
+			label = "RIGHT_USER_KEY";
+			linux,code = <KEY_RIGHT>;
+			gpios = <&gpio2 RK_PB0 GPIO_ACTIVE_LOW>;
+			debounce-interval = <10>;
+			wakeup-source;
+		};
+		key_user_left: key-user-left {
+			label = "LEFT_USER_KEY";
+			linux,code = <KEY_LEFT>;
+			gpios = <&gpio2 RK_PA7 GPIO_ACTIVE_LOW>;
+			debounce-interval = <10>;
+			wakeup-source;
+		};
+		key_user_down: key-user-down {
+			label = "DOWN_USER_KEY";
+			linux,code = <KEY_DOWN>;
+			gpios = <&gpio2 RK_PA6 GPIO_ACTIVE_LOW>;
+			debounce-interval = <10>;
+			wakeup-source;
+		};
+	};
+
 };
 
 /**********CRU**********/
@@ -132,4 +179,33 @@
 /**********RTC**********/
 &rtc {
 	status = "okay";
+};
+
+/**********GPIO*********/
+&pinctrl {
+    gpio1-pd3 {
+        gpio1_pd3: gpio1-pd3 {
+            rockchip,pins = <1 RK_PD3 RK_FUNC_GPIO &pcfg_pull_up>;
+        };
+    };
+	gpio2-pb1 {
+        gpio2_pb1: gpio2-pb1 {
+            rockchip,pins = <2 RK_PB1 RK_FUNC_GPIO &pcfg_pull_up>;
+        };
+    };
+	gpio2-pb0 {
+        gpio2_pb0: gpio2-pb0 {
+            rockchip,pins = <2 RK_PB0 RK_FUNC_GPIO &pcfg_pull_up>;
+        };
+    };
+	gpio2-pa7 {
+        gpio2_pa7: gpio2-pa7 {
+            rockchip,pins = <2 RK_PA7 RK_FUNC_GPIO &pcfg_pull_up>;
+        };
+    };
+	gpio2-pa6 {
+        gpio2_pa6: gpio2-pa6 {
+            rockchip,pins = <2 RK_PA6 RK_FUNC_GPIO &pcfg_pull_up>;
+        };
+    };
 };
