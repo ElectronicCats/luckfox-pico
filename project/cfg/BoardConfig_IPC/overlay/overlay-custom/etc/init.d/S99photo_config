@@ -1,0 +1,33 @@
+#!/bin/bash
+
+SOURCE="/root/photo_config.ini"
+DEST_DIR="/userdata/video0"
+DEST_FILE="$DEST_DIR/photo_config.ini"
+
+# Check if the source file exists
+if [ ! -f "$SOURCE" ]; then
+    echo "Source file does NOT exist."
+    exit 1
+fi
+
+# Check if the directory exists
+if [ ! -d "$DEST_DIR" ]; then
+    echo "Destination directory does NOT exist."
+    exit 1
+fi
+
+# Check if destination file already exists
+if [ -f "$DEST_FILE" ]; then
+    echo "Destination file already exists. Leaving it unchanged."
+    exit 0
+fi
+
+# Copy only if it does not exist
+cp "$SOURCE" "$DEST_FILE"
+
+if [ $? -eq 0 ]; then
+    echo "File successfully copied."
+else
+    echo "Error copying the file."
+    exit 1
+fi

@@ -16,6 +16,8 @@
 #include "video.h"
 #include <linux/input.h>
 
+#include "photo_config_watcher.h"
+
 #ifdef LOG_TAG
 #undef LOG_TAG
 #endif
@@ -142,6 +144,60 @@ static void *wait_key_event(void *arg) {
 	return NULL;
 }
 
+static void *take_photo_event(void *arg) {
+
+    photo_config_watcher_init();
+
+    int key_fd = open("/dev/input/event1", O_RDONLY);
+    if (key_fd < 0) {
+        LOG_ERROR("can't open /dev/input/event1\n");
+        return NULL;
+    }
+
+    fd_set rfds;
+    int nfds = key_fd + 1;
+    struct timeval timeout;
+    struct input_event key_event;
+
+    while (g_main_run_) {
+
+        photo_config_watcher_process();
+
+        timeout.tv_sec = 1;
+        timeout.tv_usec = 0;
+
+        FD_ZERO(&rfds);
+        FD_SET(key_fd, &rfds);
+
+        select(nfds, &rfds, NULL, NULL, &timeout);
+
+        if (FD_ISSET(key_fd, &rfds)) {
+
+            read(key_fd, &key_event, sizeof(key_event));
+
+            LOG_INFO("[sec:%d,usec:%d,type:%d,code:%d,value:%d]\n",
+                     key_event.time.tv_sec,
+                     key_event.time.tv_usec,
+                     key_event.type,
+                     key_event.code,
+                     key_event.value);
+
+            if ((key_event.code == KEY_ENTER) && key_event.value) {
+                rk_take_photo();
+            }
+            else if ((key_event.code == KEY_UP) && key_event.value) {
+                rk_param_reload();
+                rk_osd_restart();
+            }
+        }
+    }
+
+    photo_config_watcher_deinit();
+
+    close(key_fd);
+    return NULL;
+}
+
 int main(int argc, char **argv) {
 	pthread_t key_chk;
 	LOG_DEBUG("main begin\n");
@@ -172,6 +228,7 @@ int main(int argc, char **argv) {
 	rkipc_server_init();
 	rk_storage_init();
 	pthread_create(&key_chk, NULL, wait_key_event, NULL);
+	pthread_create(&key_chk, NULL, take_photo_event, NULL);
 
 	while (g_main_run_) {
 		usleep(1000 * 1000);
