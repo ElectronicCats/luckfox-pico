@@ -1,0 +1,78 @@
+#!/bin/sh
+#
+# NeoPixel service
+#
+
+DAEMON="/usr/bin/neopixel"
+PIDFILE="/var/run/neopixel.pid"
+NAME="neopixel"
+
+start() {
+    echo "Starting $NAME..."
+
+    [ -x "$DAEMON" ] || {
+        echo "Binary not found: $DAEMON"
+        return 0
+    }
+
+    start-stop-daemon \
+        --start \
+        --quiet \
+        --background \
+        --make-pidfile \
+        --pidfile "$PIDFILE" \
+        --exec "$DAEMON"
+
+    echo "OK"
+}
+
+stop() {
+    echo "Stopping $NAME..."
+
+    if [ -f "$PIDFILE" ]; then
+        start-stop-daemon \
+            --stop \
+            --quiet \
+            --pidfile "$PIDFILE"
+
+        rm -f "$PIDFILE"
+        echo "OK"
+    else
+        echo "Not running"
+    fi
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
+status() {
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then
+        echo "$NAME is running (PID $(cat $PIDFILE))"
+    else
+        echo "$NAME is stopped"
+    fi
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        restart
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit 0

@@ -142,7 +142,7 @@
 
 /**********SPI**********/
 &spi0 {
-	status = "disabled";
+	status = "okay";
 	spidev@0 {
 		spi-max-frequency = <50000000>;
 	};
