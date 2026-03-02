@@ -18,7 +18,9 @@
 #define TARGET_FILE_SOURCE  "/root/photo_config.ini"
 #define DEST_FILE_SOURCE    "/oem/usr/share/rkipc-300w.ini"
 #define DEST_FILE           "/userdata/rkipc.ini"
-#define SECTION             "osd.2"
+#define SECTION2            "osd.2"
+#define SECTION6            "osd.6"
+#define SECTION7            "osd.7"
 
 #define EVENT_MASK (IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE)
 #define BUF_LEN (1024 * (sizeof(struct inotify_event) + NAME_MAX + 1))
@@ -28,7 +30,7 @@ typedef struct {
     const char *default_value;
 } config_schema_t;
 
-static config_schema_t schema[] = {
+static config_schema_t schema_character[] = {
     {"type",         "character"},
     {"enabled",      "0"},
     {"position_x",   "0"},
@@ -36,7 +38,16 @@ static config_schema_t schema[] = {
     {"display_text", "null"},
 };
 
-#define NUM_KEYS (sizeof(schema)/sizeof(schema[0]))
+static config_schema_t schema_image[] = {
+    {"type",         "image"},
+    {"enabled",      "0"},
+    {"position_x",   "0"},
+    {"position_y",   "0"},
+    {"image_path",   "null"},
+};
+
+#define NUM_KEYS_CHARACTER (sizeof(schema_character)/sizeof(schema_character[0]))
+#define NUM_KEYS_IMAGE (sizeof(schema_image)/sizeof(schema_image[0]))
 
 static int inotify_fd = -1;
 static int watch_fd = -1;
@@ -49,6 +60,29 @@ static time_t get_mtime(const char *filepath) {
     if (stat(filepath, &st) != 0)
         return 0;
     return st.st_mtime;
+}
+
+/* ===================================== */
+
+static void set_section(dictionary *src, dictionary *dst, dictionary *dst_source, const char* section, config_schema_t* schema, int num_keys) {
+    
+    char fullkey[128];
+
+    for (int i = 0; i < num_keys; i++) {
+
+        snprintf(fullkey, sizeof(fullkey),
+                 "%s:%s", section, schema[i].key);
+
+        const char *value =
+            iniparser_getstring(src, fullkey, NULL);
+
+        if (!value)
+            value = schema[i].default_value;
+
+        // Update both destinations
+        iniparser_set(dst, fullkey, value);
+        iniparser_set(dst_source, fullkey, value);
+    }
 }
 
 /* ===================================== */
@@ -80,23 +114,9 @@ static void process_file(void) {
     if (!dst_source)
         dst_source = dictionary_new(0);
 
-    char fullkey[128];
-
-    for (int i = 0; i < NUM_KEYS; i++) {
-
-        snprintf(fullkey, sizeof(fullkey),
-                 "%s:%s", SECTION, schema[i].key);
-
-        const char *value =
-            iniparser_getstring(src, fullkey, NULL);
-
-        if (!value)
-            value = schema[i].default_value;
-
-        // Update both destinations
-        iniparser_set(dst, fullkey, value);
-        iniparser_set(dst_source, fullkey, value);
-    }
+    set_section(src, dst, dst_source, SECTION2, schema_character, NUM_KEYS_CHARACTER);
+    set_section(src, dst, dst_source, SECTION6, schema_image, NUM_KEYS_IMAGE);
+    set_section(src, dst, dst_source, SECTION7, schema_image, NUM_KEYS_IMAGE);
 
     // Save DEST_FILE
     FILE *f = fopen(DEST_FILE, "w");

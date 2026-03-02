@@ -145,12 +145,12 @@ static void *wait_key_event(void *arg) {
 }
 
 static void *take_photo_event(void *arg) {
-
     photo_config_watcher_init();
 
     int key_fd = open("/dev/input/event1", O_RDONLY);
     if (key_fd < 0) {
         LOG_ERROR("can't open /dev/input/event1\n");
+        photo_config_watcher_deinit();
         return NULL;
     }
 
@@ -158,9 +158,9 @@ static void *take_photo_event(void *arg) {
     int nfds = key_fd + 1;
     struct timeval timeout;
     struct input_event key_event;
+    ssize_t rb;
 
     while (g_main_run_) {
-
         photo_config_watcher_process();
 
         timeout.tv_sec = 1;
@@ -169,13 +169,23 @@ static void *take_photo_event(void *arg) {
         FD_ZERO(&rfds);
         FD_SET(key_fd, &rfds);
 
-        select(nfds, &rfds, NULL, NULL, &timeout);
+        int ret = select(nfds, &rfds, NULL, NULL, &timeout);
+        if (ret < 0) {
+            if (errno == EINTR)
+                continue;
+            LOG_ERROR("select error: %d\n", errno);
+            break;
+        }
 
         if (FD_ISSET(key_fd, &rfds)) {
+            rb = read(key_fd, &key_event, sizeof(key_event));
+            if (rb != sizeof(key_event)) {
+                if (rb < 0 && errno != EINTR)
+                    LOG_ERROR("read error: %d\n", errno);
+                continue;
+            }
 
-            read(key_fd, &key_event, sizeof(key_event));
-
-            LOG_INFO("[sec:%d,usec:%d,type:%d,code:%d,value:%d]\n",
+            LOG_INFO("[sec:%ld,usec:%ld,type:%d,code:%d,value:%d]\n",
                      key_event.time.tv_sec,
                      key_event.time.tv_usec,
                      key_event.type,
@@ -185,15 +195,10 @@ static void *take_photo_event(void *arg) {
             if ((key_event.code == KEY_ENTER) && key_event.value) {
                 rk_take_photo();
             }
-            else if ((key_event.code == KEY_UP) && key_event.value) {
-                rk_param_reload();
-                rk_osd_restart();
-            }
         }
     }
 
     photo_config_watcher_deinit();
-
     close(key_fd);
     return NULL;
 }
