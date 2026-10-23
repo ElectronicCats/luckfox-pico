@@ -1,0 +1,346 @@
+#!/bin/sh
+#
+# File: configs/overlay-badge-fastboot/etc/init.d/S49mtp
+# Purpose: USB gadget and MTP/ADB startup service.
+#
+#
+# Badge Hack GDL 2026 — USB gadget (MTP + ADB over FunctionFS)
+#
+# Composition is intentionally small: MTP (3 eps) + ADB (2 eps) = 5.
+# If the composite cannot bind, ADB is removed and MTP-only is retried.
+#
+
+GADGET=/sys/kernel/config/usb_gadget/badge
+FFS_MNT=/dev/ffs-mtp
+ADB_MNT=/dev/usb-ffs/adb
+PIDFILE=/var/run/umtprd.pid
+ADB_PIDFILE=/var/run/adbd.pid
+CONF_TPL=/etc/umtprd/umtprd.conf
+CONF_RUN=/tmp/umtprd.conf
+UMTPRD=/oem/usr/sbin/umtprd
+ADBD=/usr/bin/adbd
+LOG=/tmp/umtprd.log
+
+log() { echo "mtp: $*"; }
+
+# Debug stage visible on the WS2812 and recorded for badge_photo.
+stage() {
+    echo "$1" > /tmp/usb_stage
+    [ -x /oem/usr/bin/badge_photo ] && \
+        [ ! -s /tmp/badge_system.ready ] && \
+        /oem/usr/bin/badge_photo --led-rgb "$1" >/dev/null 2>&1 || true
+}
+
+insmod_if_needed() {
+    mod="$1"
+    [ -f "/oem/usr/ko/$mod.ko" ] || return 0
+    grep -q "^$mod " /proc/modules && return 0
+    insmod "/oem/usr/ko/$mod.ko" >>/tmp/usb_modules.log 2>&1 || true
+}
+
+load_modules() {
+    insmod_if_needed usb-common
+    insmod_if_needed usbcore
+    insmod_if_needed udc-core
+    insmod_if_needed configfs
+    insmod_if_needed libcomposite
+    insmod_if_needed usb_f_fs
+    insmod_if_needed u_ether
+    insmod_if_needed usb_f_rndis
+    insmod_if_needed u_serial
+    insmod_if_needed usb_f_acm
+    insmod_if_needed extcon-core
+    insmod_if_needed phy-rockchip-inno-usb2
+    insmod_if_needed dwc3-of-simple
+    insmod_if_needed dwc3
+}
+
+get_serial() {
+    serial=$(awk -F: '/^Serial/ {gsub(/[ \t]/, "", $2); print $2}' /proc/cpuinfo 2>/dev/null | head -1)
+    if [ -n "$serial" ]; then
+        echo "$serial"
+        return
+    fi
+    if [ -s /userdata/.mtp_serial ]; then
+        cat /userdata/.mtp_serial
+        return
+    fi
+    serial="BADGE$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | cut -c1-16)"
+    [ -n "$serial" ] || serial="BADGE000000000000"
+    echo "$serial" > /userdata/.mtp_serial 2>/dev/null || true
+    echo "$serial"
+}
+
+configfs_mount() {
+    mkdir -p /sys/kernel/config
+    mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+}
+
+gadget_create() {
+    configfs_mount
+    mkdir -p "$GADGET"
+    echo 0x2207 > "$GADGET/idVendor"
+    echo 0x0019 > "$GADGET/idProduct"
+    echo 0x0200 > "$GADGET/bcdUSB"
+    echo 0x0100 > "$GADGET/bcdDevice"
+    echo 0x00 > "$GADGET/bDeviceClass"
+    echo 0x00 > "$GADGET/bDeviceSubClass"
+    echo 0x00 > "$GADGET/bDeviceProtocol"
+
+    mkdir -p "$GADGET/strings/0x409"
+    mkdir -p "$GADGET/configs/b.1/strings/0x409"
+    SERIAL=$(get_serial)
+    echo "$SERIAL" > "$GADGET/strings/0x409/serialnumber"
+    echo "Electronic Cats" > "$GADGET/strings/0x409/manufacturer"
+    echo "Badge Hack GDL 2026" > "$GADGET/strings/0x409/product"
+    echo "MTP" > "$GADGET/configs/b.1/strings/0x409/configuration"
+    echo 500 > "$GADGET/configs/b.1/MaxPower"
+
+    mkdir -p "$GADGET/functions/ffs.mtp"
+    mkdir -p "$GADGET/functions/ffs.adb"
+    if [ -f /oem/usr/ko/usb_f_rndis.ko ]; then
+        mkdir -p "$GADGET/functions/rndis.usb0"
+        echo "02:00:00:00:00:01" > "$GADGET/functions/rndis.usb0/dev_addr"
+        echo "02:00:00:00:00:02" > "$GADGET/functions/rndis.usb0/host_addr"
+
+        # Windows needs Microsoft OS descriptors and RNDIS as the first
+        # function in the configuration to bind the built-in RNDIS6 driver.
+        # Linux accepts this layout too.
+        mkdir -p "$GADGET/functions/rndis.usb0/os_desc/interface.rndis"
+        echo RNDIS > "$GADGET/functions/rndis.usb0/os_desc/interface.rndis/compatible_id"
+        echo 5162001 > "$GADGET/functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id"
+        mkdir -p "$GADGET/os_desc"
+        echo 1 > "$GADGET/os_desc/use"
+        echo 0xcd > "$GADGET/os_desc/b_vendor_code"
+        echo MSFT100 > "$GADGET/os_desc/qw_sign"
+        echo 0xef > "$GADGET/bDeviceClass"
+        echo 0x02 > "$GADGET/bDeviceSubClass"
+        echo 0x01 > "$GADGET/bDeviceProtocol"
+    fi
+    # ACM is only a last-resort rescue console.
+    mkdir -p "$GADGET/functions/acm.gs0" 2>/dev/null || true
+}
+
+ffs_mount() {
+    mkdir -p "$FFS_MNT"
+    mountpoint -q "$FFS_MNT" || mount -t functionfs mtp "$FFS_MNT"
+}
+
+adb_mount() {
+    [ -x "$ADBD" ] || return 0
+    mkdir -p "$ADB_MNT"
+    chmod 0770 "$ADB_MNT" 2>/dev/null || true
+    mountpoint -q "$ADB_MNT" || \
+        mount -o uid=2000,gid=2000 -t functionfs adb "$ADB_MNT"
+}
+
+start_adbd() {
+    [ -x "$ADBD" ] || { log "$ADBD no existe; ADB omitido"; return 0; }
+    if [ -f "$ADB_PIDFILE" ] && kill -0 "$(cat "$ADB_PIDFILE")" 2>/dev/null; then
+        return 0
+    fi
+    "$ADBD" >/tmp/adbd.log 2>&1 &
+    echo $! > "$ADB_PIDFILE"
+    sleep 1
+    if kill -0 "$(cat "$ADB_PIDFILE")" 2>/dev/null; then
+        log "adbd pid $(cat "$ADB_PIDFILE")"
+        return 0
+    fi
+    log "adbd terminó; ver /tmp/adbd.log"
+    rm -f "$ADB_PIDFILE"
+    return 1
+}
+
+start_umtprd() {
+    [ -x "$UMTPRD" ] || { log "$UMTPRD no existe"; return 1; }
+    [ -f "$CONF_TPL" ] || { log "$CONF_TPL no existe"; return 1; }
+
+    # Live overlay configuration storage exposed over MTP.
+    mkdir -p /userdata/badge
+    [ -f /userdata/badge/overlay.ini ] || \
+        cp -f /oem/usr/share/badge/overlay.ini /userdata/badge/overlay.ini
+    chmod 0666 /userdata/badge/overlay.ini 2>/dev/null || true
+
+    SERIAL=$(get_serial)
+    sed "s|@MTP_SERIAL@|$SERIAL|g" "$CONF_TPL" > "$CONF_RUN"
+    "$UMTPRD" -conf "$CONF_RUN" >"$LOG" 2>&1 &
+    echo $! > "$PIDFILE"
+    sleep 1
+    if ! kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        log "umtprd terminó; ver $LOG"
+        rm -f "$PIDFILE"
+        return 1
+    fi
+    log "umtprd pid $(cat "$PIDFILE")"
+    return 0
+}
+
+wait_udc() {
+    i=0
+    while [ $i -lt 20 ]; do
+        udc=$(ls /sys/class/udc 2>/dev/null | head -1)
+        [ -n "$udc" ] && return 0
+        sleep 0.5
+        i=$((i + 1))
+    done
+    return 1
+}
+
+bind_udc() {
+    wait_udc || { stage 16,0,32; log "no hay UDC"; return 1; }
+    udc=$(ls /sys/class/udc 2>/dev/null | head -1)
+    echo "$udc" > "$GADGET/UDC" || {
+        stage 32,0,16
+        log "no se pudo bindear UDC=$udc"
+        return 1
+    }
+    log "UDC=$udc"
+}
+
+start() {
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        log "ya está corriendo"
+        return 0
+    fi
+    stage 32,0,0
+    ifconfig lo up 2>/dev/null || true
+    load_modules
+    stage 32,16,0
+    idx=0
+    for mod in dwc3 phy_rockchip_inno_usb2 extcon_core libcomposite usb_f_fs; do
+        idx=$((idx + 1))
+        grep -q "^$mod " /proc/modules && continue
+        case $idx in
+            1) stage 32,0,0 ;;    # dwc3        -> rojo
+            2) stage 32,16,0 ;;   # PHY         -> naranja
+            3) stage 32,32,0 ;;   # extcon      -> amarillo
+            4) stage 32,0,32 ;;   # libcomposite-> magenta
+            5) stage 0,32,32 ;;   # usb_f_fs    -> cian
+        esac
+        log "módulo ausente: $mod"
+        return 1
+    done
+    gadget_create || { stage 32,32,32; return 1; }
+    # RNDIS must be the first function for the Windows RNDIS6 driver.
+    if [ -d "$GADGET/functions/rndis.usb0" ]; then
+        ln -sf "$GADGET/functions/rndis.usb0" "$GADGET/configs/b.1/rndis.usb0"
+        ln -sfn "$GADGET/configs/b.1" "$GADGET/os_desc/b.1"
+    fi
+    ln -sf "$GADGET/functions/ffs.mtp" "$GADGET/configs/b.1/ffs.mtp"
+    ln -sf "$GADGET/functions/ffs.adb" "$GADGET/configs/b.1/ffs.adb"
+    stage 0,32,32
+    ffs_mount || log "FunctionFS MTP no disponible"
+    stage 0,0,32
+    adb_mount || log "FunctionFS ADB no disponible"
+    stage 16,0,32
+    if start_umtprd; then
+        :
+    else
+        log "MTP no disponible; se retira ffs.mtp"
+        rm -f "$GADGET/configs/b.1/ffs.mtp"
+    fi
+    stage 32,0,16
+    if start_adbd; then
+        :
+    else
+        log "ADB no disponible; se retira ffs.adb"
+        rm -f "$GADGET/configs/b.1/ffs.adb"
+    fi
+    if ! bind_udc; then
+        log "bind completo falló; reintentando sin RNDIS"
+        echo "" > "$GADGET/UDC" 2>/dev/null || true
+        rm -f "$GADGET/configs/b.1/rndis.usb0" "$GADGET/os_desc/b.1"
+        echo 0x00 > "$GADGET/bDeviceClass"
+        echo 0x00 > "$GADGET/bDeviceSubClass"
+        echo 0x00 > "$GADGET/bDeviceProtocol"
+        if ! bind_udc; then
+            log "MTP+ADB falló; reintentando MTP-only"
+            echo "" > "$GADGET/UDC" 2>/dev/null || true
+            rm -f "$GADGET/configs/b.1/ffs.adb"
+            killall adbd 2>/dev/null || true
+            if ! bind_udc; then
+                log "MTP-only falló; intentando consola ACM"
+                echo "" > "$GADGET/UDC" 2>/dev/null || true
+                rm -f "$GADGET/configs/b.1/ffs.mtp"
+                killall umtprd 2>/dev/null || true
+                [ -d "$GADGET/functions/acm.gs0" ] && \
+                    ln -sf "$GADGET/functions/acm.gs0" "$GADGET/configs/b.1/acm.gs0"
+                bind_udc || return 1
+            fi
+        fi
+    fi
+    stage 0,32,0
+    sleep 1
+    if [ -c /dev/ttyGS0 ]; then
+        setsid /bin/sh -c 'exec /bin/sh </dev/ttyGS0 >/dev/ttyGS0 2>&1' &
+        log "consola de rescate en /dev/ttyGS0"
+    else
+        log "sin consola ACM (/dev/ttyGS0)"
+    fi
+    if [ -L "$GADGET/configs/b.1/rndis.usb0" ]; then
+        # RNDIS web UI: prefer the newest usb* netdev (usb0 on a clean boot).
+        RNDIS_IF=""
+        for n in /sys/class/net/usb*; do
+            [ -e "$n" ] && RNDIS_IF=${n##*/}
+        done
+        [ -n "$RNDIS_IF" ] || RNDIS_IF=usb0
+        ifconfig "$RNDIS_IF" 192.168.42.1 netmask 255.255.255.0 up 2>/dev/null || true
+        if [ -x /oem/usr/bin/overlay_web ]; then
+            start-stop-daemon --stop --quiet --pidfile /var/run/overlay_web.pid 2>/dev/null || true
+            start-stop-daemon --start --background --make-pidfile \
+                --pidfile /var/run/overlay_web.pid --exec /oem/usr/bin/overlay_web
+            log "overlay web en http://192.168.42.1/"
+        fi
+        if [ -x /oem/usr/bin/rndis_dhcp ]; then
+            start-stop-daemon --stop --quiet --pidfile /var/run/rndis_dhcp.pid 2>/dev/null || true
+            start-stop-daemon --start --background --make-pidfile \
+                --pidfile /var/run/rndis_dhcp.pid --exec /oem/usr/bin/rndis_dhcp -- "$RNDIS_IF"
+        fi
+    fi
+    log "MTP listo"
+    return 0
+}
+
+stop() {
+    if [ -f "$GADGET/UDC" ]; then
+        echo "" > "$GADGET/UDC" 2>/dev/null || true
+    fi
+    if [ -f "$ADB_PIDFILE" ]; then
+        kill "$(cat "$ADB_PIDFILE")" 2>/dev/null || true
+        rm -f "$ADB_PIDFILE"
+    fi
+    killall adbd 2>/dev/null || true
+    if [ -f "$PIDFILE" ]; then
+        kill "$(cat "$PIDFILE")" 2>/dev/null || true
+        sleep 1
+        kill -9 "$(cat "$PIDFILE")" 2>/dev/null || true
+        rm -f "$PIDFILE"
+    fi
+    [ -L "$GADGET/configs/b.1/ffs.mtp" ] && rm -f "$GADGET/configs/b.1/ffs.mtp"
+    [ -L "$GADGET/configs/b.1/ffs.adb" ] && rm -f "$GADGET/configs/b.1/ffs.adb"
+    [ -L "$GADGET/configs/b.1/acm.gs0" ] && rm -f "$GADGET/configs/b.1/acm.gs0"
+    [ -d "$GADGET/functions/ffs.mtp" ] && rmdir "$GADGET/functions/ffs.mtp" 2>/dev/null || true
+    [ -d "$GADGET/functions/ffs.adb" ] && rmdir "$GADGET/functions/ffs.adb" 2>/dev/null || true
+    [ -d "$GADGET/functions/acm.gs0" ] && rmdir "$GADGET/functions/acm.gs0" 2>/dev/null || true
+    [ -d "$GADGET/configs/b.1/strings/0x409" ] && rmdir "$GADGET/configs/b.1/strings/0x409" 2>/dev/null || true
+    [ -d "$GADGET/configs/b.1" ] && rmdir "$GADGET/configs/b.1" 2>/dev/null || true
+    [ -d "$GADGET/strings/0x409" ] && rmdir "$GADGET/strings/0x409" 2>/dev/null || true
+    [ -d "$GADGET" ] && rmdir "$GADGET" 2>/dev/null || true
+    mountpoint -q "$FFS_MNT" && umount "$FFS_MNT" 2>/dev/null || true
+    mountpoint -q "$ADB_MNT" && umount "$ADB_MNT" 2>/dev/null || true
+    log "MTP/ADB detenidos"
+}
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; sleep 1; start ;;
+    status)
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            log "corriendo (pid $(cat "$PIDFILE"))"
+        else
+            log "detenido"
+        fi
+        ;;
+    *) echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
