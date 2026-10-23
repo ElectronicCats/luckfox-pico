@@ -1,0 +1,15 @@
+#
+# File: mcu/board/rv1106_evb-SC3336-ADC/SConscript
+# Purpose: RT-Thread build script for the badge MCU board files.
+#
+Import('RTT_ROOT')
+Import('rtconfig')
+from building import *
+
+cwd = GetCurrentDir()
+src = Glob('*.c')
+CPPPATH = [cwd]
+
+group = DefineGroup('BoardConfig', src, depend = [], CPPPATH = CPPPATH)
+
+Return('group')

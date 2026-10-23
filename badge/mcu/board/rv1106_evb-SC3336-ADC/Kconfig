@@ -1,0 +1,4 @@
+#
+# File: mcu/board/rv1106_evb-SC3336-ADC/Kconfig
+# Purpose: RT-Thread board Kconfig entry for the badge MCU target.
+#
