@@ -1,0 +1,7 @@
+# Build artifacts
+build/
+out/
+# Optional local host tools (install-host-tools.sh)
+.host-tools/
+# Local release artifacts (not versioned)
+release/

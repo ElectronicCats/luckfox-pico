@@ -1,0 +1,4 @@
+#!/bin/sh
+# CMake 4 removed compatibility with cmake_minimum_required < 3.5.
+# The Rockchip media projects still use 2.8/3.0; allow them to configure.
+exec /usr/bin/cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 "$@"
