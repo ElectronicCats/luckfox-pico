@@ -9,6 +9,10 @@
 # Composition is intentionally small: MTP (3 eps) + ADB (2 eps) = 5.
 # If the composite cannot bind, ADB is removed and MTP-only is retried.
 #
+# A small watchdog rebinds the UDC when the cable is reconnected but the
+# host does not enumerate. This avoids requiring a battery power cycle after
+# unplugging/replugging the USB cable.
+#
 
 GADGET=/sys/kernel/config/usb_gadget/badge
 FFS_MNT=/dev/ffs-mtp
@@ -20,8 +24,23 @@ CONF_RUN=/tmp/umtprd.conf
 UMTPRD=/oem/usr/sbin/umtprd
 ADBD=/usr/bin/adbd
 LOG=/tmp/umtprd.log
+WATCHDOG_PIDFILE=/var/run/usb_watchdog.pid
+WATCHDOG_LOG=/userdata/badge/usb_watchdog.log
 
 log() { echo "mtp: $*"; }
+
+wlog() {
+    echo "usb-watchdog: $*" >> "$WATCHDOG_LOG" 2>/dev/null || true
+    echo "usb-watchdog: $*" > /dev/kmsg 2>/dev/null || true
+}
+
+udc_state() {
+    cat /sys/class/udc/*/state 2>/dev/null | head -1
+}
+
+usb_vbus() {
+    cat /sys/class/extcon/*/state 2>/dev/null | sed -n 's/^USB=//p' | head -1
+}
 
 # Debug stage visible on the WS2812 and recorded for badge_photo.
 stage() {
@@ -197,6 +216,58 @@ bind_udc() {
     log "UDC=$udc"
 }
 
+rebind_udc() {
+    udc=$(ls /sys/class/udc 2>/dev/null | head -1)
+    [ -n "$udc" ] || { wlog "rebind: no UDC"; return 1; }
+    wlog "rebind UDC=$udc state=$(udc_state)"
+    echo "" > "$GADGET/UDC" 2>/dev/null || true
+    sleep 1
+    echo "$udc" > "$GADGET/UDC" 2>/dev/null || true
+}
+
+watchdog() {
+    : > "$WATCHDOG_LOG" 2>/dev/null || true
+    wlog "start"
+    prev_vbus=""
+    stuck=0
+    while true; do
+        vbus=$(usb_vbus)
+        state=$(udc_state)
+        if [ "$vbus" = "1" ]; then
+            if [ "$prev_vbus" = "0" ]; then
+                sleep 2
+                state=$(udc_state)
+                case "$state" in
+                    configured|addressed) wlog "reconnect state=$state" ;;
+                    *) wlog "reconnect state=$state; rebind"; rebind_udc ;;
+                esac
+            fi
+            case "$state" in
+                configured|addressed) stuck=0 ;;
+                *) stuck=$((stuck + 1)) ;;
+            esac
+            if [ "$stuck" -ge 3 ]; then
+                wlog "stuck state=$state; rebind"
+                rebind_udc
+                stuck=0
+            fi
+        else
+            stuck=0
+        fi
+        prev_vbus=$vbus
+        sleep 1
+    done
+}
+
+start_watchdog() {
+    if [ -f "$WATCHDOG_PIDFILE" ] && kill -0 "$(cat "$WATCHDOG_PIDFILE")" 2>/dev/null; then
+        return 0
+    fi
+    start-stop-daemon --start --background --make-pidfile \
+        --pidfile "$WATCHDOG_PIDFILE" --exec "$0" -- watchdog
+    wlog "started pid $(cat "$WATCHDOG_PIDFILE" 2>/dev/null)"
+}
+
 start() {
     if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
         log "ya está corriendo"
@@ -297,11 +368,16 @@ start() {
                 --pidfile /var/run/rndis_dhcp.pid --exec /oem/usr/bin/rndis_dhcp -- "$RNDIS_IF"
         fi
     fi
+    start_watchdog
     log "MTP listo"
     return 0
 }
 
 stop() {
+    if [ -f "$WATCHDOG_PIDFILE" ]; then
+        kill "$(cat "$WATCHDOG_PIDFILE")" 2>/dev/null || true
+        rm -f "$WATCHDOG_PIDFILE"
+    fi
     if [ -f "$GADGET/UDC" ]; then
         echo "" > "$GADGET/UDC" 2>/dev/null || true
     fi
@@ -335,6 +411,7 @@ case "$1" in
     start) start ;;
     stop) stop ;;
     restart) stop; sleep 1; start ;;
+    watchdog) watchdog ;;
     status)
         if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
             log "corriendo (pid $(cat "$PIDFILE"))"
@@ -342,5 +419,5 @@ case "$1" in
             log "detenido"
         fi
         ;;
-    *) echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+    *) echo "Usage: $0 {start|stop|restart|status|watchdog}"; exit 1 ;;
 esac
